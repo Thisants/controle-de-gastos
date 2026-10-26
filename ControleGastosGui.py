@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Interface gráfica do Controle de Gastos.
 
-Usa o mesmo gastos.csv e as mesmas funções do controle_gastos.py,
+Usa o mesmo gastos.csv e as mesmas funções do controleGastos.py,
 então os dois programas podem ser usados em conjunto.
 Deixe os dois arquivos na mesma pasta.
 """
@@ -12,9 +12,16 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from tkinter import messagebox, ttk
 
-from controle_gastos import (CATEGORIAS, MAX_METAS, ajustar_meta, calcular, carregar,
-                             carregar_metas, criar_meta, do_mes, excluir_meta, fmt,
-                             fmt_num, parse_numero, salvar, status_meta)
+try:
+    from Controlegastos import (CATEGORIAS, MAX_METAS, ajustar_meta, calcular,
+                               carregar, carregar_metas, criar_meta, do_mes,
+                               excluir_meta, fmt, fmt_num, parse_numero, salvar,
+                               status_meta)
+except ModuleNotFoundError:
+    from Controlegastos import (CATEGORIAS, MAX_METAS, ajustar_meta, calcular,
+                               carregar, carregar_metas, criar_meta, do_mes,
+                               excluir_meta, fmt, fmt_num, parse_numero, salvar,
+                               status_meta)
 
 VERDE, VERMELHO, AZUL = "#1a7f37", "#c62828", "#1565c0"
 
@@ -205,7 +212,8 @@ class App(tk.Tk):
                 por_cat[r["categoria"]] += Decimal(r["valor"])
         self.tv_cat.delete(*self.tv_cat.get_children())
         for cat, v in sorted(por_cat.items(), key=lambda x: -x[1]):
-            self.tv_cat.insert("", "end", values=(cat, fmt(v), f"{v / gas * 100:.0f}%"))
+            pct = (v / gas * 100) if gas else Decimal(0)
+            self.tv_cat.insert("", "end", values=(cat, fmt(v), f"{pct:.0f}%"))
 
     # ---------- Metas ----------
     def montar_metas(self):

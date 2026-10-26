@@ -79,16 +79,28 @@ def status_meta(m):
     falta = max(alvo - tem, Decimal(0))
     pct = min(tem / alvo * 100, Decimal(100)) if alvo else Decimal(100)
     if falta == 0:
-        return "Meta atingida! 🎉", float(pct)
-    return f"Você tem {fmt(tem)}, falta {fmt(falta)}", float(pct)
+        return "Meta atingida!", float(pct)
+    return f"Voce tem {fmt(tem)}, falta {fmt(falta)}", float(pct)
 
 
 # ---------- Calculadora ----------
 def parse_numero(txt, milhar=False):
-    """Converte texto em Decimal. Com milhar=True, '.' é separador de milhar (padrão BR)."""
-    txt = txt.strip().replace("R$", "").replace(" ", "")
+    """Converte texto em Decimal com suporte ao formato brasileiro.
+
+    Aceita valores como 1234,56, 1234.56, 1.234,56 e 1.234.
+    """
+    if txt is None:
+        raise InvalidOperation
+
+    txt = str(txt).strip().replace("R$", "").replace(" ", "")
+    if not txt:
+        raise InvalidOperation
+
     if milhar or "," in txt:
         txt = txt.replace(".", "").replace(",", ".")
+    elif txt.count(".") > 1:
+        txt = txt.replace(".", "")
+
     v = Decimal(txt)
     if not v.is_finite():
         raise InvalidOperation
@@ -179,7 +191,7 @@ def registrar(tipo):
         "descricao": descricao,
         "valor": str(valor),
     })
-    print(f"✔ {tipo.capitalize()} de {fmt(valor)} registrada.")
+    print(f"OK: {tipo.capitalize()} de {fmt(valor)} registrada.")
 
 
 def do_mes(registros, ano, mes):
@@ -215,7 +227,8 @@ def resumo():
     if por_cat:
         print("\nGastos por categoria:")
         for cat, v in sorted(por_cat.items(), key=lambda x: -x[1]):
-            print(f"  {cat:<15} {fmt(v):>14}  ({v / despesas * 100:.0f}%)")
+            pct = (v / despesas * 100) if despesas else Decimal(0)
+            print(f"  {cat:<15} {fmt(v):>14}  ({pct:.0f}%)")
 
 
 def listar():
