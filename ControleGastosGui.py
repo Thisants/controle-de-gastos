@@ -12,7 +12,9 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from tkinter import messagebox, ttk
 
-from controle_gastos import CATEGORIAS, carregar, do_mes, fmt, salvar
+from controle_gastos import (CATEGORIAS, MAX_METAS, ajustar_meta, calcular, carregar,
+                             carregar_metas, criar_meta, do_mes, excluir_meta, fmt,
+                             fmt_num, parse_numero, salvar, status_meta)
 
 VERDE, VERMELHO, AZUL = "#1a7f37", "#c62828", "#1565c0"
 
@@ -41,15 +43,27 @@ class App(tk.Tk):
         self.valor = tk.StringVar()
         self.data = tk.StringVar(value=hoje.strftime("%d/%m/%Y"))
 
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="both", expand=True)
+        self.aba_gastos = ttk.Frame(self.nb)
+        self.aba_metas = ttk.Frame(self.nb)
+        self.aba_calc = ttk.Frame(self.nb)
+        self.nb.add(self.aba_gastos, text="Gastos")
+        self.nb.add(self.aba_metas, text="Metas")
+        self.nb.add(self.aba_calc, text="Calculadora")
+
         self.montar()
+        self.montar_metas()
+        self.montar_calc()
         self.atualizar()
+        self.atualizar_metas()
 
     # ---------- Layout ----------
     def montar(self):
         pad = {"padx": 10, "pady": 6}
 
         # Período
-        topo = ttk.Frame(self)
+        topo = ttk.Frame(self.aba_gastos)
         topo.pack(fill="x", **pad)
         ttk.Label(topo, text="Mês:").pack(side="left")
         sp_mes = ttk.Spinbox(topo, from_=1, to=12, width=4, textvariable=self.mes,
@@ -63,7 +77,7 @@ class App(tk.Tk):
             sp.bind("<Return>", lambda e: self.atualizar())
 
         # Cartões de resumo
-        cards = ttk.Frame(self)
+        cards = ttk.Frame(self.aba_gastos)
         cards.pack(fill="x", **pad)
         self.lbl = {}
         for chave, titulo, cor in (("rec", "Receitas", VERDE),
@@ -74,11 +88,11 @@ class App(tk.Tk):
             self.lbl[chave] = tk.Label(box, text="R$ 0,00", fg=cor,
                                        font=("TkDefaultFont", 16, "bold"))
             self.lbl[chave].pack(padx=8, pady=6)
-        self.lbl_pct = ttk.Label(self, text="")
+        self.lbl_pct = ttk.Label(self.aba_gastos, text="")
         self.lbl_pct.pack(anchor="w", padx=14)
 
         # Formulário
-        form = ttk.LabelFrame(self, text="Novo lançamento")
+        form = ttk.LabelFrame(self.aba_gastos, text="Novo lançamento")
         form.pack(fill="x", **pad)
 
         linha1 = ttk.Frame(form)
@@ -104,7 +118,7 @@ class App(tk.Tk):
         ent_valor.bind("<Return>", lambda e: self.adicionar())
 
         # Gastos por categoria
-        cat_frame = ttk.LabelFrame(self, text="Gastos por categoria")
+        cat_frame = ttk.LabelFrame(self.aba_gastos, text="Gastos por categoria")
         cat_frame.pack(fill="x", **pad)
         self.tv_cat = ttk.Treeview(cat_frame, columns=("cat", "total", "pct"),
                                    show="headings", height=4)
@@ -114,7 +128,7 @@ class App(tk.Tk):
         self.tv_cat.pack(fill="x", padx=6, pady=6)
 
         # Lançamentos
-        lanc = ttk.LabelFrame(self, text="Lançamentos do mês")
+        lanc = ttk.LabelFrame(self.aba_gastos, text="Lançamentos do mês")
         lanc.pack(fill="both", expand=True, **pad)
         cols = ("data", "categoria", "descricao", "valor")
         self.tv = ttk.Treeview(lanc, columns=cols, show="headings")
@@ -192,6 +206,104 @@ class App(tk.Tk):
         self.tv_cat.delete(*self.tv_cat.get_children())
         for cat, v in sorted(por_cat.items(), key=lambda x: -x[1]):
             self.tv_cat.insert("", "end", values=(cat, fmt(v), f"{v / gas * 100:.0f}%"))
+
+    # ---------- Metas ----------
+    def montar_metas(self):
+        p = self.aba_metas
+        self.meta_nome, self.meta_alvo = tk.StringVar(), tk.StringVar()
+        novo = ttk.LabelFrame(p, text=f"Nova meta (máximo {MAX_METAS})")
+        novo.pack(fill="x", padx=10, pady=8)
+        ttk.Label(novo, text="Quero conseguir:").grid(row=0, column=0, sticky="w", padx=8)
+        ttk.Label(novo, text="Quanto custa? (R$)").grid(row=0, column=1, sticky="w")
+        ttk.Entry(novo, textvariable=self.meta_nome, width=32).grid(row=1, column=0, padx=8, pady=6)
+        ent = ttk.Entry(novo, textvariable=self.meta_alvo, width=14)
+        ent.grid(row=1, column=1)
+        ent.bind("<Return>", lambda e: self.nova_meta())
+        ttk.Button(novo, text="Criar meta", command=self.nova_meta).grid(row=1, column=2, padx=8)
+        self.lista_metas = ttk.Frame(p)
+        self.lista_metas.pack(fill="both", expand=True, padx=10)
+
+    def nova_meta(self):
+        nome = self.meta_nome.get().strip()
+        if not nome:
+            messagebox.showerror("Meta", "Dê um nome para a meta. Ex.: Viagem")
+            return
+        try:
+            alvo = parse_valor(self.meta_alvo.get())
+            criar_meta(nome, alvo)
+        except InvalidOperation:
+            messagebox.showerror("Valor inválido", "Digite um valor maior que zero. Ex.: 5000,00")
+            return
+        except ValueError as e:
+            messagebox.showwarning("Limite de metas", str(e))
+            return
+        self.meta_nome.set("")
+        self.meta_alvo.set("")
+        self.atualizar_metas()
+
+    def mover_meta(self, i, var, sinal):
+        try:
+            valor = parse_valor(var.get())
+        except InvalidOperation:
+            messagebox.showerror("Valor inválido", "Digite um valor maior que zero.")
+            return
+        ajustar_meta(i, valor * sinal)
+        self.atualizar_metas()
+
+    def apagar_meta(self, i):
+        if messagebox.askyesno("Excluir meta", "Excluir esta meta?"):
+            excluir_meta(i)
+            self.atualizar_metas()
+
+    def atualizar_metas(self):
+        for w in self.lista_metas.winfo_children():
+            w.destroy()
+        metas = carregar_metas()
+        if not metas:
+            ttk.Label(self.lista_metas, text="Nenhuma meta ainda. Crie a primeira acima!").pack(pady=20)
+        for i, m in enumerate(metas):
+            texto, pct = status_meta(m)
+            box = ttk.LabelFrame(self.lista_metas, text=f"{m['nome']} — alvo {fmt(Decimal(m['alvo']))}")
+            box.pack(fill="x", pady=4)
+            tk.Label(box, text=texto, fg=VERDE if pct >= 100 else AZUL,
+                     font=("TkDefaultFont", 11, "bold")).pack(anchor="w", padx=8, pady=(6, 2))
+            ttk.Progressbar(box, value=pct, maximum=100).pack(fill="x", padx=8)
+            linha = ttk.Frame(box)
+            linha.pack(fill="x", padx=8, pady=6)
+            v = tk.StringVar()
+            ttk.Entry(linha, textvariable=v, width=14).pack(side="left")
+            ttk.Button(linha, text="Guardar",
+                       command=lambda i=i, v=v: self.mover_meta(i, v, 1)).pack(side="left", padx=4)
+            ttk.Button(linha, text="Retirar",
+                       command=lambda i=i, v=v: self.mover_meta(i, v, -1)).pack(side="left")
+            ttk.Button(linha, text="Excluir",
+                       command=lambda i=i: self.apagar_meta(i)).pack(side="right")
+
+    # ---------- Calculadora ----------
+    def montar_calc(self):
+        self.n1, self.n2 = tk.StringVar(), tk.StringVar()
+        self.res = tk.StringVar(value="—")
+        q = ttk.Frame(self.aba_calc)
+        q.pack(pady=30)
+        ttk.Label(q, text="Primeiro número").pack()
+        ttk.Entry(q, textvariable=self.n1, width=22, justify="right").pack(pady=4)
+        ttk.Label(q, text="Segundo número").pack()
+        ttk.Entry(q, textvariable=self.n2, width=22, justify="right").pack(pady=4)
+        botoes = ttk.Frame(q)
+        botoes.pack(pady=10)
+        for simbolo, op in (("+", "+"), ("−", "-"), ("×", "*"), ("÷", "/")):
+            ttk.Button(botoes, text=simbolo, width=4,
+                       command=lambda op=op: self.operar(op)).pack(side="left", padx=3)
+        tk.Label(q, textvariable=self.res, fg=AZUL, font=("TkDefaultFont", 20, "bold")).pack(pady=10)
+
+    def operar(self, op):
+        try:
+            r = calcular(parse_numero(self.n1.get()), op, parse_numero(self.n2.get()))
+            self.res.set(f"= {fmt_num(r)}")
+        except InvalidOperation:
+            self.res.set("Número inválido")
+        except ZeroDivisionError:
+            self.res.set("Divisão por zero")
 
 
 if __name__ == "__main__":
